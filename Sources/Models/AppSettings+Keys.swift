@@ -47,6 +47,7 @@ extension AppSettings {
         static let notifyOnMeetingEnd     = "meeting.notifyOnMeetingEnd"
         static let retainMeetingAudio     = "meeting.retainAudio"
         static let frontMatterEnabled     = "meeting.frontMatterEnabled"
+        static let titleIncludesAccount   = "meeting.titleIncludesAccount"
         static let diarizationEnabled     = "meeting.diarizationEnabled"
         static let offlineFallback        = "transcription.offlineFallback"
         static let preferOnDeviceAI       = "ai.preferOnDevice"
@@ -146,7 +147,7 @@ extension AppSettings {
                           notesFolderPath, overlayMode,
                           summariesEnabled, actionItemsEnabled,
                           structuredExtraction, extractKeyFields, extractUnanswered, watchlistKeywords, draftGuidance, userDraftTemplates, openNotesExternally, topicChapters, talkTimeAnalytics, objectionIntel, agenticAsk, agenticAskMaxHops, liveAssistantEnabled, meetingPrepCard,
-                          notifyOnMeetingEnd, retainMeetingAudio, frontMatterEnabled,
+                          notifyOnMeetingEnd, retainMeetingAudio, frontMatterEnabled, titleIncludesAccount,
                           diarizationEnabled, offlineFallback, preferOnDeviceAI, transcriptionLanguage,
                           digestEnabled, digestFrequency, digestHour, digestWeekday, staleRelationshipDays, lastDigestDay,
                           vocabulary, replacements, appProfiles, pasteOnlyApps,
@@ -212,6 +213,7 @@ extension AppSettings {
         static let notifyOnMeetingEnd              = true
         static let retainMeetingAudio              = true
         static let frontMatterEnabled              = true
+        static let titleIncludesAccount            = true
         static let diarizationEnabled              = true
         static let offlineFallback                 = true
         static let preferOnDeviceAI                = false

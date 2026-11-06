@@ -1154,7 +1154,7 @@ final class TextPolisher {
     /// yields empty values, exactly like the three calls it replaces). A head +
     /// tail clip keeps both the opening (best for the title/topic) and the late
     /// decisions (best for fields) in view.
-    func extractMeetingFacts(transcript: String, includeTitle: Bool,
+    func extractMeetingFacts(transcript: String, includeTitle: Bool, topicOnlyTitle: Bool = false,
                              includePeople: Bool, fields: [ExtractionField]) async -> MeetingFacts {
         guard !apiKey.isEmpty else { return MeetingFacts() }
         let body = Self.summarizableBody(transcript)
@@ -1163,14 +1163,18 @@ final class TextPolisher {
             : body
 
         var keys: [String] = []
-        if includeTitle {
+        if includeTitle && topicOnlyTitle {
+            // The account name is prefixed by the app ("Acme: …"), so the model
+            // supplies only the short topic.
+            keys.append(#""title": a short, meaningful 2-5 word Title-Case topic for the meeting (what it is about, e.g. "SSO Rollout Kickoff") — do NOT include the customer, partner or company name, a date, or quotes,"#)
+        } else if includeTitle {
             keys.append(#""title": a concise 3-7 word Title-Case name for the meeting, like an email subject (name the topic and, if clear, the party) — no date, no quotes,"#)
         }
         keys.append(#""topics": 3-6 short lowercase hyphenated subject tags (e.g. ["budget-review","q3-roadmap"]),"#)
         keys.append(includePeople
             ? #""people": array of participant/person names mentioned (proper case, e.g. ["Priya Fernando"]),"#
             : #""people": [] (leave empty),"#)
-        keys.append(#""customer": the customer/client/company name if this is about one, else null,"#)
+        keys.append(#""customer": the customer, partner or client company name if this is about one, else null,"#)
         keys.append(fields.isEmpty
             ? #""project": the project or product name if one is central, else null."#
             : #""project": the project or product name if one is central, else null,"#)

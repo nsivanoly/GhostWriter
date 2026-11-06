@@ -30,6 +30,14 @@ struct ActionItemsList: View {
         case named(String)
     }
 
+    /// A "mark these done / open" request — a group, a meeting, an owner, or everything shown.
+    struct BulkChange: Identifiable {
+        let id = UUID()
+        let title: String
+        let ids: [UUID]
+        let done: Bool
+    }
+
     @State private var rows: [Row] = []
     @State private var loading = false
     @State private var filter = ActionFilter()
@@ -40,7 +48,10 @@ struct ActionItemsList: View {
     @State private var range: DateRange = .quarter
     @State private var scopeKind = ""
     @State private var scopeID = ""
-    @State private var lastTicked: UUID?
+    /// What the notice's Undo reverts: these rows were set to `done`'s opposite.
+    @State private var undo: (ids: [UUID], done: Bool)?
+    /// A bulk change waiting for confirmation (several notes get rewritten).
+    @State private var pendingBulk: BulkChange?
     @State private var message: String?
     @State private var confirmReminders = false
 
@@ -108,6 +119,16 @@ struct ActionItemsList: View {
             }
         }
         .task { await scan() }
+        .confirmationDialog(pendingBulk.map { "\($0.done ? "Mark" : "Reopen") \($0.ids.count) item\($0.ids.count == 1 ? "" : "s") \($0.done ? "done" : "as open")?" } ?? "",
+                            isPresented: Binding(get: { pendingBulk != nil }, set: { if !$0 { pendingBulk = nil } }),
+                            titleVisibility: .visible) {
+            if let b = pendingBulk {
+                Button(b.done ? "Mark Done" : "Reopen") { setDone(b.ids, done: b.done); pendingBulk = nil }
+            }
+            Button("Cancel", role: .cancel) { pendingBulk = nil }
+        } message: {
+            Text(pendingBulk.map { "\($0.title). Each item's checkbox is rewritten in its source note; you can undo right after." } ?? "")
+        }
         .confirmationDialog("Add \(remindable.count) open item\(remindable.count == 1 ? "" : "s") to Reminders?",
                             isPresented: $confirmReminders, titleVisibility: .visible) {
             Button("Add to Reminders") { addToReminders(remindable) }
@@ -170,6 +191,17 @@ struct ActionItemsList: View {
                     .help("Only items from meetings in this window")
                 OrgProjectTreePicker(store: store, kind: $scopeKind, id: $scopeID, allLabel: "All accounts")
 
+                Menu {
+                    Button("Mark All Shown as Done (\(remindable.count))") { requestBulk("All \(remindable.count) open items shown", remindable.map(\.id), done: true) }
+                        .disabled(remindable.isEmpty)
+                    Button("Reopen All Shown Done Items (\(doneShown.count))") { requestBulk("All \(doneShown.count) completed items shown", doneShown, done: false) }
+                        .disabled(doneShown.isEmpty)
+                    Divider()
+                    Button("Copy Shown as Checklist") { copyChecklist(shown.map(\.id)) }
+                } label: { Label("Bulk", systemImage: "checkmark.circle.badge.questionmark") }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .help("Act on everything shown — or use a group's ⋯ menu for just that group")
+
                 Button { confirmReminders = true } label: { Label("Reminders", systemImage: "bell") }
                     .disabled(remindable.isEmpty)
                     .help("Add the open items shown to Apple Reminders")
@@ -229,9 +261,9 @@ struct ActionItemsList: View {
     private func notice(_ text: String) -> some View {
         HStack(spacing: 8) {
             Text(text).font(.caption)
-            if lastTicked != nil { Button("Undo") { if let id = lastTicked { toggle(id) } }.buttonStyle(.link).font(.caption) }
+            if let u = undo { Button("Undo") { setDone(u.ids, done: !u.done, recordUndo: false); message = "Undone."; undo = nil }.buttonStyle(.link).font(.caption) }
             Spacer()
-            Button { message = nil; lastTicked = nil } label: { Image(systemName: "xmark") }
+            Button { message = nil; undo = nil } label: { Image(systemName: "xmark") }
                 .buttonStyle(.borderless).font(.caption)
         }
         .padding(.horizontal, 10).padding(.vertical, 5)
@@ -247,7 +279,25 @@ struct ActionItemsList: View {
             if let sub = s.subtitle { Text(sub).font(.caption).foregroundStyle(.secondary) }
             Spacer()
             Text("\(s.entries.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            groupMenu(s)
         }
+    }
+
+    /// The ⋯ menu on a group: finish, reopen, remind, or copy just that group.
+    private func groupMenu(_ s: ActionQuery.Section) -> some View {
+        let open = s.entries.filter { !$0.done }.map(\.id)
+        let done = s.entries.filter(\.done).map(\.id)
+        return Menu {
+            Button("Mark \(open.count) Open as Done") { requestBulk("Every open item in “\(s.title)”", open, done: true) }
+                .disabled(open.isEmpty)
+            Button("Reopen \(done.count) Done") { requestBulk("Every completed item in “\(s.title)”", done, done: false) }
+                .disabled(done.isEmpty)
+            Divider()
+            Button("Add Open Items to Reminders") { addToReminders(open.compactMap { rowByID[$0] }) }.disabled(open.isEmpty)
+            Button("Copy as Checklist") { copyChecklist(s.entries.map(\.id)) }
+        } label: { Image(systemName: "ellipsis.circle") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help("Actions for this group")
     }
 
     private func rowView(_ row: Row) -> some View {
@@ -291,6 +341,15 @@ struct ActionItemsList: View {
             Button("Open Note") { NotesViewerWindowController.present(fileURL: row.url) }
             Button("Copy") { Clipboard.plain(e.text) }
             if !e.done { Button("Add to Reminders") { addToReminders([row]) } }
+            let sameNote = shown.filter { $0.noteKey == e.noteKey && !$0.done }.map(\.id)
+            let sameOwner = e.owner.map { o in shown.filter { $0.owner?.caseInsensitiveCompare(o) == .orderedSame && !$0.done }.map(\.id) } ?? []
+            if sameNote.count > 1 || sameOwner.count > 1 { Divider() }
+            if sameNote.count > 1 {
+                Button("Mark All \(sameNote.count) from This Meeting as Done") { requestBulk("Open items shown from “\(e.noteTitle)”", sameNote, done: true) }
+            }
+            if sameOwner.count > 1, let o = e.owner {
+                Button("Mark All \(sameOwner.count) for @\(o) as Done") { requestBulk("Open items shown for @\(o)", sameOwner, done: true) }
+            }
         }
     }
 
@@ -334,27 +393,63 @@ struct ActionItemsList: View {
             } catch {
                 message = error.localizedDescription
             }
-            lastTicked = nil
+            undo = nil
         }
     }
 
-    /// Tick an item done (or back to open): rewrites its checkbox in the source note,
-    /// then updates the row in place — no rescan.
+    /// Ids of completed items currently shown.
+    private var doneShown: [UUID] { shown.filter(\.done).map(\.id) }
+
+    /// Flip one item.
     private func toggle(_ id: UUID) {
-        guard let i = rows.firstIndex(where: { $0.id == id }) else { return }
-        let item = rows[i].item
-        guard NotesLibrary.toggleDone(item) else {
-            message = "Couldn't update the note — it may have been edited since the scan. Rescan and try again."
-            lastTicked = nil
-            return
+        guard let row = rowByID[id] else { return }
+        setDone([id], done: !row.entry.done)
+    }
+
+    /// One item goes straight through; several ask first.
+    private func requestBulk(_ title: String, _ ids: [UUID], done: Bool) {
+        if ids.count <= 1 { setDone(ids, done: done) } else { pendingBulk = BulkChange(title: title, ids: ids, done: done) }
+    }
+
+    /// Set the given items done (or open): rewrites each checkbox in its source
+    /// note, then updates the rows in place — no rescan. Items already in the
+    /// target state are skipped; a failed rewrite (the note changed since the scan)
+    /// is counted and reported rather than aborting the rest.
+    private func setDone(_ ids: [UUID], done: Bool, recordUndo: Bool = true) {
+        var changed: [UUID] = [], failed = 0
+        for id in ids {
+            guard let i = rows.firstIndex(where: { $0.id == id }), rows[i].entry.done != done else { continue }
+            let item = rows[i].item
+            guard NotesLibrary.toggleDone(item) else { failed += 1; continue }
+            let bullet = item.rawLine.hasPrefix("*") ? "*" : "-"
+            rows[i].item = NotesLibrary.ActionItem(file: item.file, text: item.text, done: done,
+                                                   rawLine: "\(bullet) [\(done ? "x" : " ")] \(item.text)")
+            rows[i].entry.done = done
+            changed.append(id)
         }
-        let nowDone = !item.done
-        let bullet = item.rawLine.hasPrefix("*") ? "*" : "-"
-        rows[i].item = NotesLibrary.ActionItem(file: item.file, text: item.text, done: nowDone,
-                                               rawLine: "\(bullet) [\(nowDone ? "x" : " ")] \(item.text)")
-        rows[i].entry.done = nowDone
-        message = nowDone ? "Marked done in “\(rows[i].entry.noteTitle)”." : "Marked open again."
-        lastTicked = nowDone ? id : nil
+        var text: String
+        switch (changed.count, done) {
+        case (1, true):  text = "Marked done in “\(rows.first { $0.id == changed[0] }?.entry.noteTitle ?? "note")”."
+        case (1, false): text = "Marked open again."
+        case (let n, _): text = n == 0 ? "Nothing to change." : "\(done ? "Marked" : "Reopened") \(n) items\(done ? " done" : "")."
+        }
+        if failed > 0 { text += " \(failed) couldn't be updated — rescan and try again." }
+        message = text
+        undo = (recordUndo && !changed.isEmpty) ? (changed, done) : nil
+    }
+
+    /// The items as a Markdown checklist, ready to paste into notes or chat.
+    private func copyChecklist(_ ids: [UUID]) {
+        let byID = rowByID
+        let lines = ids.compactMap { byID[$0] }.map { r -> String in
+            var line = "- [\(r.entry.done ? "x" : " ")] \(r.entry.text)"
+            if let o = r.entry.owner { line += " — @\(o)" }
+            if let d = r.entry.dueText { line += " (due: \(d))" }
+            return line
+        }
+        Clipboard.plain(lines.joined(separator: "\n"))
+        message = "Copied \(lines.count) item\(lines.count == 1 ? "" : "s") as a checklist."
+        undo = nil
     }
 
     // MARK: Scan

@@ -293,6 +293,7 @@ final class AppSettings: ObservableObject {
 
     /// Prepend YAML front-matter (Obsidian/Notion friendly) to notes files.
     @Setting(Key.frontMatterEnabled, Default.frontMatterEnabled) var frontMatterEnabled: Bool
+    @Setting(Key.titleIncludesAccount, Default.titleIncludesAccount) var titleIncludesAccount: Bool
 
     /// How meeting notes files are organized under the notes folder.
     var notesOrganization: NotesOrganization {

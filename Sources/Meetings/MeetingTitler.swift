@@ -18,6 +18,34 @@ enum MeetingTitler {
                        options: .regularExpression) != nil
     }
 
+    /// "Acme: SSO Rollout Kickoff" — the account name, a colon, then the topic.
+    /// The topic alone when there's no account or it already leads with it.
+    static func compose(topic: String, account: String?) -> String {
+        let t = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let a = account?.trimmingCharacters(in: .whitespacesAndNewlines), !a.isEmpty,
+              !t.lowercased().hasPrefix(a.lowercased()) else { return t }
+        return "\(a): \(t)"
+    }
+
+    /// The account (organisation) a note is filed under in the Catalog, if any.
+    @MainActor
+    static func filedAccount(of fileURL: URL) -> String? {
+        let store = CatalogStore.shared
+        let rel = AppSettings.shared.relativePath(of: fileURL)
+        guard let note = store.doc.notes.first(where: { $0.filePath == rel }) else { return nil }
+        if let p = note.projectIDs.first, let org = store.org(forProject: p) { return org.name }
+        return note.orgIDs.first.flatMap { store.org($0)?.name }
+    }
+
+    /// The finished title for a note: topic prefixed with its account when the
+    /// setting is on. `customer` is the model's guess, used only when the note
+    /// isn't filed under an organisation yet.
+    @MainActor
+    static func title(topic: String, customer: String?, for fileURL: URL) -> String {
+        guard AppSettings.shared.titleIncludesAccount else { return topic }
+        return compose(topic: topic, account: filedAccount(of: fileURL) ?? MeetingRefinery.validatedCustomer(customer))
+    }
+
     enum Outcome: Equatable {
         case titled(String)
         case failed(String)
@@ -34,10 +62,12 @@ enum MeetingTitler {
             return .failed("Not enough conversation to title.")
         }
         let facts = await polisher.extractMeetingFacts(
-            transcript: transcript, includeTitle: true, includePeople: false, fields: [])
+            transcript: transcript, includeTitle: true,
+            topicOnlyTitle: AppSettings.shared.titleIncludesAccount, includePeople: false, fields: [])
         guard !facts.title.isEmpty else { return .failed("Couldn't generate a title — check your API key and connection.") }
-        apply(facts.title, to: fileURL)
-        return .titled(facts.title)
+        let title = Self.title(topic: facts.title, customer: facts.metadata.customer, for: fileURL)
+        apply(title, to: fileURL)
+        return .titled(title)
     }
 
     /// Write `title` to the note's front-matter and Catalog row (kept in sync).
