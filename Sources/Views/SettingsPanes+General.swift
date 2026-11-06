@@ -214,6 +214,19 @@ struct GeneralPane: View {
                     .font(.caption).foregroundColor(.secondary)
             }
 
+            SettingsGroup("Action Items") {
+                HStack {
+                    Text("My names")
+                    TextField("e.g. Siva", text: $settings.actionMyNames)
+                        .textFieldStyle(.roundedBorder)
+                    DefaultResetButton(isDefault: settings.actionMyNames == AppSettings.Default.actionMyNames) {
+                        settings.actionMyNames = AppSettings.Default.actionMyNames
+                    }
+                }
+                Text("Meeting summaries assign action items to whoever was speaking — \"You\" for your own voice, or a name once you've identified speakers. List the names that mean you (comma-separated) so the **Me** filter in Catalog → Action Items finds your tasks. Your “You” speaker label is always included.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+
             SettingsGroup("PDF Export") {
                 Picker("Paper size", selection: $settings.pdfPaperSize) {
                     Text("US Letter").tag("letter")

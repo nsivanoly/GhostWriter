@@ -1183,6 +1183,16 @@ final class AppSettings: ObservableObject {
     @Setting(Key.networkDerivedLinks, Default.networkDerivedLinks) var networkDerivedLinks: Bool
     /// Animate the layout settling (off = jump straight to the settled picture).
     @Setting(Key.networkAnimate, Default.networkAnimate) var networkAnimate: Bool
+    /// Names the notes use for you, beyond your "You" speaker label (comma-separated,
+    /// e.g. "Siva") — what the **Me** filter in Catalog → Action Items matches.
+    @Setting(Key.actionMyNames, Default.actionMyNames) var actionMyNames: String
+
+    /// The names that mean "me" in action-item owners: your speaker label plus `actionMyNames`.
+    var myOwnerNames: [String] {
+        ([speakerLabelYou] + actionMyNames.split(separator: ",").map(String.init))
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
     /// Days without a note before an open organisation/project is flagged dormant.
     var networkDormantDays: Int {
         get { min(365, max(7, int(Key.networkDormantDays, Default.networkDormantDays))) }

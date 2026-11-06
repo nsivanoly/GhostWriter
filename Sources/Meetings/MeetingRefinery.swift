@@ -168,9 +168,7 @@ enum MeetingRefinery {
         // key fields (one fast structured call above).
         if let facts {
             if wantsTitle, !facts.title.isEmpty {
-                MeetingNotesWriter.setFrontMatterTitle(facts.title, to: fileURL)
-                CatalogStore.shared.renameNote(
-                    relativePath: AppSettings.shared.relativePath(of: fileURL), to: facts.title)
+                MeetingTitler.apply(facts.title, to: fileURL)
             }
             if wantsMeta {
                 var meta = facts.metadata

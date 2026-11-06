@@ -30,6 +30,8 @@ struct NotesList: View {
     @State private var multiSel = Set<String>()
     @State private var pendingBulkTrash = false
     @State private var showBulkAssign = false
+    // Bulk "generate titles" progress (nil = idle).
+    @State private var titleProgress: (done: Int, total: Int)?
 
     private var trimmedQuery: String { query.trimmingCharacters(in: .whitespaces) }
 
@@ -60,6 +62,27 @@ struct NotesList: View {
         var ns = store.doc.notes
         if searching { ns = ns.filter { store.noteMatches($0, query: trimmedQuery) } }
         return facetFiltered(ns).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+    }
+
+    /// Visible meeting notes still on the placeholder title.
+    private var untitled: [CatalogNote] {
+        filtered.filter { $0.filePath.hasSuffix(".md") && MeetingTitler.isDefault($0.title) && store.fileExists($0) }
+    }
+
+    /// Generate real titles for every visible placeholder-titled note, one after
+    /// another (the AI gate paces the calls).
+    private func titleAll() {
+        let targets = untitled
+        guard !targets.isEmpty, titleProgress == nil else { return }
+        titleProgress = (0, targets.count)
+        Task { @MainActor in
+            let polisher = TextPolisher()
+            for (i, n) in targets.enumerated() {
+                _ = await MeetingTitler.generate(for: store.url(of: n), using: polisher)
+                titleProgress = (i + 1, targets.count)
+            }
+            titleProgress = nil
+        }
     }
 
     private var groups: [DateGroupNode<CatalogNote>] {
@@ -107,6 +130,16 @@ struct NotesList: View {
                         }
                         .buttonStyle(.borderless).font(.caption)
                         .help("Select multiple to assign or delete")
+                        if let p = titleProgress {
+                            ProgressView().controlSize(.small)
+                            Text("Titling \(p.done)/\(p.total)").font(.caption).foregroundStyle(.secondary)
+                        } else if !untitled.isEmpty {
+                            Button(action: titleAll) {
+                                Label("Title \(untitled.count) untitled", systemImage: "sparkles")
+                            }
+                            .buttonStyle(.borderless).font(.caption)
+                            .help("Generate a title from the transcript for every meeting still named “Meeting <date>”")
+                        }
                         Spacer()
                         if !searching && !filtered.isEmpty {
                             ExpandCollapseButton(tree: groups, expanded: $expanded)
@@ -498,6 +531,8 @@ struct NoteLinkEditor: View {
     let note: CatalogNote
     @State private var showAssign = false
     @State private var titleDraft = ""
+    @State private var titling = false
+    @State private var titleStatus = ""
     @State private var meetingTypeID = ""
     @State private var audioRelPath = ""
     @State private var audioBusy = false
@@ -512,8 +547,19 @@ struct NoteLinkEditor: View {
     private func commitTitle() {
         let t = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, t != current.title else { return }
-        store.renameNote(relativePath: note.filePath, to: t)
-        MeetingNotesWriter.setFrontMatterTitle(t, to: fileURL)
+        MeetingTitler.apply(t, to: fileURL)
+    }
+
+    /// Ask the model for a title from the transcript and show it in the field.
+    private func suggestTitle() {
+        titling = true; titleStatus = ""
+        Task { @MainActor in
+            defer { titling = false }
+            switch await MeetingTitler.generate(for: fileURL) {
+            case .titled(let t): titleDraft = t
+            case .failed(let why): titleStatus = why
+            }
+        }
     }
 
     /// Load the front-matter fields the editor edits directly (meeting type,
@@ -670,8 +716,20 @@ struct NoteLinkEditor: View {
             Section {
                 Button { openNote(note) } label: { Label("Open note", systemImage: "arrow.up.forward.app") }
                 // Editable title — writes the Catalog row and the file front-matter.
-                TextField("Title", text: $titleDraft)
-                    .onSubmit(commitTitle)
+                HStack {
+                    TextField("Title", text: $titleDraft)
+                        .onSubmit(commitTitle)
+                    if isMeetingNote {
+                        Button { suggestTitle() } label: {
+                            if titling { ProgressView().controlSize(.small) }
+                            else { Image(systemName: "sparkles") }
+                        }
+                        .buttonStyle(.borderless).disabled(titling)
+                        .help(MeetingTitler.isDefault(current.title)
+                              ? "Generate a title from the meeting" : "Regenerate the title from the meeting")
+                    }
+                }
+                if !titleStatus.isEmpty { Text(titleStatus).font(.caption).foregroundStyle(.secondary) }
                 if let d = note.date { LabeledContent("Date") { Text(d.formatted(date: .abbreviated, time: .shortened)) } }
                 // Meeting type — correct the template a note was filed under.
                 if isMeetingNote {
